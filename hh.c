@@ -1,73 +1,80 @@
 #define _GNU_SOURCE
-
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 #include <unistd.h>
+#include <time.h>
 #include <fcntl.h>
+#include <errno.h>
+#include <string.h>
 #include <signal.h>
 #include <poll.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <errno.h>
+#define S 1024
 
-typedef int fd_t;
-#define O_ERROR -1
+int main(int argc, char ** argv){
+	
+	if( argc < 2 ){
+		printf("ERROR\n");
+		return 0;
+	}
+	
+	int n = argc - 1;
+	int * f = (int*) calloc(n , sizeof(int));
+	
+	for (int i = 0; i < n; ++i)
+	{
+		f[i] = mkfifo(argv[i+1], O_CREAT | 0666);
+		if (f[i] == -1)
+		{
+			printf("error mkfifo %s\n", argv[i+1]);
+		}
+	}
+	int count = 0;
+	for(int i = 1; i < argc; i++){
+		f [i - 1]= open(argv[i],O_NONBLOCK | O_RDONLY);
+		if(f [i - 1] <= 0){
+			printf("error opening %s\n", argv[i]);
+			count++;
+		}
+	}
+	if (count == n){
+		printf("All files were not opened \n");
+		exit(-1);
+		}
+		
+	
+	struct pollfd *fdpoll = calloc(n, sizeof(struct pollfd));
 
-int main(int argc, char *argv[])
-{
-    //open(O_NONBLOCK) - запись произойдёт мгновенно
-    //fcntl - можно перевести в nonblock режим
-    //F_GETFL + F_SETFL
-    //man 2 poll - ожидание на дескрипторах
+	
+	for (int i = 0; i < n; i++) {
+		fdpoll[i].fd = f[i];
+		fdpoll[i].events = POLLIN;
+	}
+	
+	char* k =  calloc(S , sizeof(char));
+	
+	 while ( poll(fdpoll, n, -1) != -1) {
 
-    if (argc < 2)
-    {
-        printf("Not enough parameters for this task!\n");
-        return 0;
-    }
-
-    fd_t *fds = (fd_t *)calloc(argc - 1, sizeof(fd_t));
-    struct pollfd *fds_poll = (struct pollfd *)calloc(argc - 1, sizeof(struct pollfd));
-
-    for (int i = 1; i < argc; ++i)
-    {
-        fds[i - 1] = mkfifo(argv[i], O_CREAT | 0666);
-        if (fds[i - 1] == O_ERROR && errno != EEXIST)
-        {
-            perror("mkfifo mistake!");
-            return -1;
-        }
-
-        fds[i - 1] = open(argv[i], O_NONBLOCK);
-        if (fds[i - 1] == O_ERROR)
-        {
-            perror("open mistake!");
-            return -1;
-        }
-
-        fds_poll[i - 1].fd = fds[i - 1];
-        fds_poll[i - 1].events = POLLIN;
-    }
-
-    while (poll(fds_poll, argc - 1, -1) != O_ERROR)
-    {
-        //now ret > 0
-        for (int i = 0; i < argc - 1; ++i)
-        {
-            if (fds_poll[i].revents & POLLIN)
-            {
-                fds_poll[i].revents = 0;
-
-                printf("Printing changed file: %s!\n", argv[i + 1]);
-                pid_t pd = fork();
-                if (pd == 0)
-                {
-                    int out = execlp("cat", "cat", argv[i + 1], NULL);
-                }
-            }
-        }
-    }
-
-    free(fds);
-    free(fds_poll);
+		for (int i = 0; i < n; i++) {
+			if (fdpoll[i].revents & POLLIN){
+				int R = read(f[i], k, S);
+				if (R == -1) {
+					printf("error reading %s\n", argv[i+1]);
+					R = 0;
+				}
+				else if (R != 0) { 
+					int W = write(STDOUT_FILENO, k, R);
+					if (W == -1) 
+						printf("error writing\n");
+				}
+			}
+		}
+	}
+	
+	free(f);
+	free(fdpoll);
+	free(k);
+	return 0;
 }
